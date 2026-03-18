@@ -5,18 +5,34 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sync"
 )
+
+func GetNextBackendServer(backendServerList []string, currentBackendServer *int) int {
+	*currentBackendServer = (*currentBackendServer + 1) % len(backendServerList)
+	return *currentBackendServer
+}
 
 func main() {
 
-	backend_servers := [...]string{"http://localhost:9001", "http://localhost:9002"}
+	backendServerList := []string{"http://localhost:9001", "http://localhost:9002"}
 
-	target, _ := url.Parse()
-
-	proxy := httputil.NewSingleHostReverseProxy(target)
+	currentBackendServer := -1
+	var mu sync.Mutex
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Println("Forwarding request to backend server")
+		mu.Lock()
+		idx := GetNextBackendServer(backendServerList, &currentBackendServer)
+		mu.Unlock()
+
+		target, err := url.Parse(backendServerList[idx])
+		if err != nil {
+			http.Error(w, "Bad Backend url", http.StatusInternalServerError)
+			return
+		}
+
+		proxy := httputil.NewSingleHostReverseProxy(target)
+		log.Println("Forwarding request to:", backendServerList[idx])
 		proxy.ServeHTTP(w, r)
 	})
 
