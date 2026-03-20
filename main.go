@@ -1,26 +1,24 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"sync"
+	"time"
 
+	"github.com/kaustubhhub/reverse-proxy/config"
 	"github.com/kaustubhhub/reverse-proxy/utils"
 )
 
 func main() {
 
-	// backendServerList := []string{"http://localhost:9001", "http://localhost:9002"}
-	backendServerList, err2 := utils.LoadConfig("./config/servers.yaml")
+	backendServerList, err2 := utils.LoadConfig(config.SERVERS_PATH)
 
 	if err2 != nil {
 		panic(err2)
 	}
-
-	fmt.Println("list of backends : ", backendServerList.Servers)
 
 	currentBackendServer := -1
 	var mu sync.Mutex
@@ -37,8 +35,18 @@ func main() {
 		}
 
 		proxy := httputil.NewSingleHostReverseProxy(target)
-		log.Println("Forwarding request to:", backendServerList.Servers[idx])
+		start := time.Now()
 		proxy.ServeHTTP(w, r)
+		t := time.Now()
+		elapsed := t.Sub(start)
+		log.Printf(
+			"%s %s | client=%s | backend=%s | latency=%s",
+			r.Method,
+			r.URL.Path,
+			r.RemoteAddr,
+			backendServerList.Servers[idx],
+			elapsed.Round(time.Millisecond),
+		)
 	})
 
 	log.Println("Proxy running on :8080")
