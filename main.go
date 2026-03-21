@@ -3,10 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"sync"
-	"time"
 
 	"github.com/kaustubhhub/reverse-proxy/config"
 	"github.com/kaustubhhub/reverse-proxy/utils"
@@ -28,25 +25,7 @@ func main() {
 		idx := utils.GetNextBackendServer(backendServerList.Servers, &currentBackendServer)
 		mu.Unlock()
 
-		target, err := url.Parse(backendServerList.Servers[idx])
-		if err != nil {
-			http.Error(w, "Bad Backend url", http.StatusInternalServerError)
-			return
-		}
-
-		proxy := httputil.NewSingleHostReverseProxy(target)
-		start := time.Now()
-		proxy.ServeHTTP(w, r)
-		t := time.Now()
-		elapsed := t.Sub(start)
-		log.Printf(
-			"%s %s | client=%s | backend=%s | latency=%s",
-			r.Method,
-			r.URL.Path,
-			r.RemoteAddr,
-			backendServerList.Servers[idx],
-			elapsed.Round(time.Millisecond),
-		)
+		utils.ProxyWithFailover(w, r, backendServerList.Servers, idx)
 	})
 
 	log.Println("Proxy running on :8080")
