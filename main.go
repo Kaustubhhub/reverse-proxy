@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"net/http/httputil"
 	"sync"
 
 	"github.com/kaustubhhub/reverse-proxy/config"
@@ -19,13 +20,13 @@ func main() {
 
 	currentBackendServer := -1
 	var mu sync.Mutex
-
+	proxies := make([]*httputil.ReverseProxy, len(backendServerList.Servers))
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		idx := utils.GetNextBackendServer(backendServerList.Servers, &currentBackendServer)
 		mu.Unlock()
 
-		utils.ProxyWithFailover(w, r, backendServerList.Servers, idx)
+		utils.ProxyWithFailover(w, r, backendServerList.Servers, idx, proxies)
 	})
 
 	log.Println("Proxy running on :8080")

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
-	"net/url"
 	"os"
 	"time"
 
@@ -36,12 +35,19 @@ func LoadConfig(path string) (*config.Config, error) {
 	return &cfg, nil
 }
 
-func ProxyWithFailover(w http.ResponseWriter, r *http.Request, servers []string, startIdx int) {
+func ProxyWithFailover(
+	w http.ResponseWriter,
+	r *http.Request,
+	servers []string,
+	startIdx int,
+	proxies []*httputil.ReverseProxy,
+) {
 	if len(servers) == 0 {
 		http.Error(w, "No backends configured", http.StatusInternalServerError)
 		return
 	}
 
+	// Read body once (for retries)
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
@@ -50,73 +56,64 @@ func ProxyWithFailover(w http.ResponseWriter, r *http.Request, servers []string,
 	defer r.Body.Close()
 
 	attempts := len(servers)
-	var lastErr error
-	var lastStatus int
-	var lastBody []byte
 
-	for i := range attempts {
+	for i := 0; i < attempts; i++ {
 		backendIdx := (startIdx + i) % len(servers)
-		targetURL, err := url.Parse(servers[backendIdx])
-		if err != nil {
-			log.Printf("invalid backend URL %s: %v", servers[backendIdx], err)
-			lastErr = err
-			continue
-		}
+		proxy := proxies[backendIdx]
 
-		proxy := httputil.NewSingleHostReverseProxy(targetURL)
 		var transportErr error
+
+		// Capture transport-level errors (backend down, timeout, etc.)
 		proxy.ErrorHandler = func(_ http.ResponseWriter, _ *http.Request, err error) {
 			transportErr = err
 		}
 
-		rec := httptest.NewRecorder()
+		// Clone request
 		reqCopy := r.Clone(r.Context())
-		reqCopy.URL.Scheme = targetURL.Scheme
-		reqCopy.URL.Host = targetURL.Host
-		reqCopy.Host = targetURL.Host
 		reqCopy.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+		// Capture response
+		rec := httptest.NewRecorder()
 
 		start := time.Now()
 		proxy.ServeHTTP(rec, reqCopy)
 		elapsed := time.Since(start)
 
+		// If backend failed → try next
 		if transportErr != nil {
-			lastErr = transportErr
-			log.Printf("backend failure %s: %v (try next)", servers[backendIdx], transportErr)
+			log.Printf(
+				"attempt=%d | backend=%s | error=%v",
+				i+1,
+				servers[backendIdx],
+				transportErr,
+			)
 			continue
 		}
 
+		// Success → copy response to client
 		for k, values := range rec.Header() {
 			for _, v := range values {
 				w.Header().Add(k, v)
 			}
 		}
+
 		w.WriteHeader(rec.Code)
 		w.Write(rec.Body.Bytes())
 
-		log.Printf("%s %s | client=%s | backend=%s | latency=%s | status=%d",
+		log.Printf(
+			"%s %s | client=%s | backend=%s | status=%d | latency=%s",
 			r.Method,
 			r.URL.Path,
 			r.RemoteAddr,
 			servers[backendIdx],
-			elapsed.Round(time.Millisecond),
 			rec.Code,
+			elapsed.Round(time.Millisecond),
 		)
+
 		return
 	}
 
-	if lastErr != nil {
-		log.Printf("all backends failed: %v", lastErr)
-		http.Error(w, "All backends unavailable", http.StatusBadGateway)
-		return
-	}
-
-	// fallback if no explicit transport error was captured
-	if lastStatus != 0 {
-		w.WriteHeader(lastStatus)
-		w.Write(lastBody)
-		return
-	}
-
+	// All backends failed
+	log.Println("all backends failed")
 	http.Error(w, "All backends unavailable", http.StatusBadGateway)
 }
