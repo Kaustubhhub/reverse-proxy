@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"sync"
 
 	"github.com/kaustubhhub/reverse-proxy/config"
@@ -21,6 +22,14 @@ func main() {
 	currentBackendServer := -1
 	var mu sync.Mutex
 	proxies := make([]*httputil.ReverseProxy, len(backendServerList.Servers))
+
+	for i, backend := range backendServerList.Servers {
+		target, err := url.Parse(backend)
+		if err != nil {
+			log.Fatalf("invalid backend URL: %s", backend)
+		}
+		proxies[i] = httputil.NewSingleHostReverseProxy(target)
+	}
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		idx := utils.GetNextBackendServer(backendServerList.Servers, &currentBackendServer)

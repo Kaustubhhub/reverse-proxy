@@ -47,7 +47,6 @@ func ProxyWithFailover(
 		return
 	}
 
-	// Read body once (for retries)
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
@@ -61,25 +60,26 @@ func ProxyWithFailover(
 		backendIdx := (startIdx + i) % len(servers)
 		proxy := proxies[backendIdx]
 
+		if proxy == nil {
+			log.Printf("backend=%s | proxy is nil", servers[backendIdx])
+			continue
+		}
+
 		var transportErr error
 
-		// Capture transport-level errors (backend down, timeout, etc.)
 		proxy.ErrorHandler = func(_ http.ResponseWriter, _ *http.Request, err error) {
 			transportErr = err
 		}
 
-		// Clone request
 		reqCopy := r.Clone(r.Context())
 		reqCopy.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
-		// Capture response
 		rec := httptest.NewRecorder()
 
 		start := time.Now()
 		proxy.ServeHTTP(rec, reqCopy)
 		elapsed := time.Since(start)
 
-		// If backend failed → try next
 		if transportErr != nil {
 			log.Printf(
 				"attempt=%d | backend=%s | error=%v",
@@ -90,7 +90,6 @@ func ProxyWithFailover(
 			continue
 		}
 
-		// Success → copy response to client
 		for k, values := range rec.Header() {
 			for _, v := range values {
 				w.Header().Add(k, v)
@@ -113,7 +112,6 @@ func ProxyWithFailover(
 		return
 	}
 
-	// All backends failed
 	log.Println("all backends failed")
 	http.Error(w, "All backends unavailable", http.StatusBadGateway)
 }
