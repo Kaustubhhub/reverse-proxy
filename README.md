@@ -83,3 +83,6 @@ curl http://localhost:8080
 ```
 
 Run multiple times → requests will alternate between backends
+screenshot :
+<img width="1774" height="274" alt="image" src="https://github.com/user-attachments/assets/22ccf811-ba57-49e8-b8e1-0c6eb8454ec1" />
+
